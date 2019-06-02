@@ -55,6 +55,8 @@
 |C         | 5/28/2019     | Create a cumulative distribution of positive - negative counts of words.
 |C         | 5/28/2019     | Smooth the cumulative distribution.
 |C         | 5/28/2019     | Find local minimums and maximums of the cumulative distribution. Keep the points that indicate high changes.
+|NW         | NAN     | Do a quick calculation of statistics over all the data. Need to store this.
+|C         | 6/1/2019      | Generate music specifications (like determining the key, melody, octave, notes, tempo) using the emotional densities.
 
 
 # Step 4: Model Building
@@ -83,6 +85,7 @@
 | Progress | Date Finished | Task  
 |----------|---------------|-----
 | NW        | NAN     | Improve code documentations on preprocess files.
+| NW        | NAN     | Check pep8 standards.
 | NW        | NAN     | Update the README.md file.
 | NW        | NAN     | Build documentation with Sphinx.
 | NW        | NAN     | Create directory tree.

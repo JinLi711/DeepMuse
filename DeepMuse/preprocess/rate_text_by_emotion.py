@@ -4,12 +4,16 @@ Rate the emotional level of each sentence in a novel.
 
 
 import re
+import sys
+from os import listdir
+from os.path import isfile, join
 from collections import defaultdict
 import pandas as pd
 import numpy as np
 from spacy.lang.en import English
 from scipy.signal import argrelextrema
-import sys
+
+from generate_music_specifications import removekey
 
 
 emolex_path = "../data/NRC_emotion_lexicon_list.txt"
@@ -106,29 +110,6 @@ class EmotionalRating:
         self.total_words = len(words)
 
 
-class Section:
-    """
-    Emotional ratings of a section of the literature.
-    """
-
-    def __init__(self):
-        self.total_words = 0
-        self.emotional_counts = 0
-
-    def aggregate_occurences(self, df, start_index, end_index):
-        """
-        Sum up the emotional and total word counts. 
-        """
-
-        section = df[start_index:end_index]
-        emotional_counts = {}
-        for emotion in emotions:
-            emotional_counts[emotion] = section[emotion].sum()
-
-        self.emotional_counts = emotional_counts
-        self.total_words = section["word count"].sum()
-
-
 class Literature:
     """
     Emotional ratings of the entire literature.
@@ -136,23 +117,129 @@ class Literature:
 
     def __init__(self, path):
         self.sections = []
-        self.sentence_df = score_literature(path)
+        df = score_literature(path)
+        self.sentence_df = df
         smooth_cum_sum = smooth(
             self.sentence_df["pos - neg cumulative sum"], window_len=25)
         self.smooth_cum_sum = smooth_cum_sum
         self.min_max = find_min_max(smooth_cum_sum)
 
-    def split_into_sections(self):
+        emotion_counts = aggregate_emotional_counts(df)
+        emotion_counts["total words"] = df["word count"].sum()
+        self.emotion_density = calc_emotion_density(emotion_counts)
+
+    def split_into_sections(self, n_pitches):
+        """
+        Split the literature into sections based on sharp changes
+        of emotional counts.
+        """
+
         min_max_extended = [0] + self.min_max + [sys.maxsize]
         sections = []
         for i, index in enumerate(self.min_max):
+            df = self.sentence_df
             start = min_max_extended[i]
             end = min_max_extended[i + 1]
-            section = Section()
-            section.aggregate_occurences(self.sentence_df, start, end)
+            section = Section(start, end)
+            section.aggregate_occurences(df)
+            section.create_subsection(df, n_pitches)
             sections.append(section)
         self.sections = sections
 
+    def find_min_max_densities(self, emotion, max_emo=True):
+        """
+        Given an emotion, find its minimum or maximum
+        density over all the sections
+        """
+        
+        densities = []
+        sections = self.sections
+        for section in sections:
+            densities.append(
+                section.emotion_density[emotion]
+            )
+
+        if max_emo:
+            return max(densities)
+        else:
+            return min(densities)    
+
+
+class Section:
+    """
+    Emotional ratings of a section of the literature.
+    """
+
+    def __init__(self, start, end):
+        self.emotion_counts = dict()
+        self.emotion_density = dict()
+        self.start = start
+        self.end = end
+        self.subsections = []
+
+    def aggregate_occurences(self, df):
+        """
+        Sum up the emotional and total word counts. 
+        """
+
+        start_index = self.start
+        end_index = self.end
+        section = df[start_index:end_index]
+        emotion_counts = {}
+        for emotion in emotions:
+            emotion_counts[emotion] = section[emotion].sum()
+
+        emotion_counts["total words"] = section["word count"].sum()
+        self.emotion_counts = emotion_counts
+        self.emotion_density = calc_emotion_density(emotion_counts)
+
+    def create_subsection(self, df, n_pitches):
+        """
+        Create emotional densities of subsections of the section.
+        """
+
+        subsections = []
+        interval = int((self.end - self.start) / n_pitches)
+
+        for i in range(n_pitches):
+            start = self.start + i * interval
+            end = self.start + (i + 1) * interval
+            subsection = Subsection(start, end)
+            subsection.aggregate_occurences(df)
+            subsections.append(subsection)
+
+        self.subsections = subsections
+
+    def find_min_max_densities(self, emotion, max_emo=True):
+        """
+        Given an emotion, find its minimum or maximum
+        density over all the sections
+        """
+        
+        densities = []
+        sections = self.subsections
+        for section in sections:
+            densities.append(
+                section.emotion_density[emotion]
+            )
+
+        if max_emo:
+            return max(densities)
+        else:
+            return min(densities) 
+
+
+class Subsection(Section):
+    """
+    Subsection of the section.
+    Used for determining the pitches.
+    """
+
+    pass
+    # def __init__(self):
+    #     Section.__init__(self)
+
+    # def 
 
 def smooth(x, window_len=11, window='hanning'):
     """
@@ -226,6 +313,23 @@ def score_literature(file_path):
     return df_sentences
 
 
+def aggregate_emotional_counts(df):
+    """
+    Given the dataframe, sum up all the counts of the emotions.
+
+    :returns: dictionary mapping emotion to emotion counts
+    :rtype:   dict
+    """
+
+    emotion_count = dict()
+
+    for emotion in emotions:
+        count = df[emotion].sum()
+        emotion_count[emotion] = count
+
+    return emotion_count
+
+
 def find_min_max(series):
     """
     Find the local minimum and maximums.
@@ -237,3 +341,75 @@ def find_min_max(series):
     min_max.sort()
     
     return list(min_max)
+
+
+def calc_multiple_emotional_counts(mypath):
+    """
+    Calculate emotional counts for each file.
+    
+    :returns: dictionary mapping file name to emotion count dict
+    :rtype:   dict
+    """
+
+    literature_emotions = {}
+
+    onlyfiles = [f for f in listdir(mypath) if isfile(join(mypath, f))]
+
+    for file in onlyfiles:
+        emotion_df = score_literature(mypath + file)
+        emotion_counts = aggregate_emotional_counts(emotion_df)
+        emotion_counts["total words"] = emotion_df["word count"].sum()
+        literature_emotions[file] = emotion_counts
+
+    return literature_emotions
+
+
+def calc_emotion_density(emotion_dict):
+    """
+    Given a dict of emotional counts 
+    (including the total word counts), 
+    calculate the emotion densities.
+    """
+
+    emotion_density = dict()
+
+    total_counts = emotion_dict["total words"]
+    emotion_dict = removekey(emotion_dict, "total words")
+    for emotion, counts in emotion_dict.items():
+        emotion_density[emotion] = counts / total_counts
+
+    return emotion_density
+
+
+def calc_emotion_densities(literature_emotions):
+    """
+    Calculate the emotional densities for each literature piece.
+    
+    :returns: dictionary mapping file name to emotion density dict
+    :rtype:   dict
+    """
+
+    literature_densities = dict()
+
+    for title, emotion_dict in literature_emotions.items():
+        literature_densities[title] = calc_emotion_density(emotion_dict)
+
+    return literature_densities
+
+
+def calc_overall_emotional_density(emo_counts):
+    """
+    Calculate the overall emotion density.
+    Meaning add up all the counts of emotions, divide 
+    by the total number of words.
+    
+    :returns:
+    :rtype:   float
+    """
+
+    total_words = emo_counts["total words"]
+
+    emo_counts = removekey(emo_counts, "total words")
+    total_emo_counts = sum(emo_counts.values())
+
+    return total_emo_counts / total_words
